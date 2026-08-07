@@ -1,0 +1,4 @@
+interface:
+  display_name: "文獻搜尋、證據整理與全文下載"
+  short_description: "從 PubMed 搜尋到合法 PDF 的可稽核研究流程"
+  default_prompt: "Use $literature-review-pdfs to search PubMed, build the evidence package, then offer legal full-text retrieval for included studies."
