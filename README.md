@@ -11,23 +11,16 @@
 3. 在篩選完成後，主動詢問是否要下載已納入研究的全文。
 4. 只嘗試取得合法公開的 PDF，並建立下載與驗證紀錄。
 
-## 安裝方式
+## 學生快速安裝（建議）
 
-將此 repository 下載到 Codex 的 skills 資料夾。
+不需要安裝 Git。
 
-使用 Git：
+1. 在 GitHub 頁面按 **Code → Download ZIP**，並解壓縮。
+2. 在 Codex／ChatGPT Desktop 開啟 **Plugins → Skills → Create → Upload**，上傳解壓縮後的 skill 資料夾（或介面接受的壓縮檔）。
+3. 確認根目錄有 `SKILL.md`，完成安裝後開啟新的 task。
+4. 在 skill 資料夾中執行 `check_setup.cmd`（Windows）或 `python scripts/check_setup.py`（macOS／Linux），依畫面提示完成設定。
 
-~~~text
-git clone https://github.com/chenghsien823/literature-review-pdfs.git ~/.codex/skills/literature-review-pdfs
-~~~
-
-或直接下載 ZIP，解壓縮後放到：
-
-~~~text
-~/.codex/skills/literature-review-pdfs
-~~~
-
-確認資料夾根目錄中有 SKILL.md，然後重新啟動 Codex 或開啟新的 task，讓 Codex 重新偵測 skill。
+若學校使用 ChatGPT Edu 或 Business，建議由教師／工作區管理者上傳 skill 並分享至工作區；學生只需在「Shared by workspace」選擇安裝。若看不到 Skills 或 Upload，請洽詢工作區管理者確認權限與帳號方案。
 
 ## 使用前準備
 
@@ -38,9 +31,17 @@ git clone https://github.com/chenghsien823/literature-review-pdfs.git ~/.codex/s
 
 先在 skill 資料夾內安裝所需套件：
 
-~~~text
-python -m pip install -r requirements.txt
+~~~powershell
+# Windows（建議）
+py -3 -m pip install -r requirements.txt
 ~~~
+
+~~~bash
+# macOS 或 Linux
+python3 -m pip install -r requirements.txt
+~~~
+
+Windows 若顯示找不到 `py`，請先安裝 Python 3.10 以上版本並在安裝畫面勾選「Add Python to PATH」，再重新開啟終端機。
 
 接著設定 NCBI_EMAIL。NCBI_API_KEY 是選用項目，可提高允許的查詢速度。
 
@@ -57,6 +58,21 @@ export NCBI_EMAIL="you@example.org"
 ~~~
 
 請將 email 與 API key 保留在環境變數或你自行指定的本機 env 檔中；不要把它們寫入此 repository 或提交到 Git。
+
+設定完成後，Windows 執行：
+
+~~~powershell
+.\check_setup.cmd
+~~~
+
+這個檢查不會連線到 PubMed，也不會傳送你的 email 或 API key。
+
+## 最短成功路徑
+
+1. 將 `examples/query.scoping.example.json` 複製為 `query.json`，把族群、介入措施與結果詞換成自己的研究主題。
+2. 請 Codex 協助檢查檢索式，再執行 `run_pipeline.cmd query.json outdir --auto` 建立搜尋紀錄與 **DRAFT** 草稿。
+3. 人工閱讀、篩選並完成 `extraction.json`；只有標示 `verified: true` 的納入研究才會進入全文下載清單。
+4. 當 Codex 詢問是否下載全文時，確認後才下載合法公開 PDF。
 
 ## 基本流程
 
@@ -105,6 +121,16 @@ python scripts/retrieve_fulltext.py --input outdir/included_records.json --outpu
 它不會繞過付費牆、CAPTCHA、Cloudflare、cookies、帳號登入或任何存取限制。若文章需要機構授權，skill 只會提供安全的人工交接，不會嘗試代為登入或取得未授權內容。
 
 PDF 預設會命名為「第一作者 國家 年份.pdf」。如果無法可靠判斷第一作者國家，檔名會使用 UnknownCountry，並在 manifest 中標示需要人工確認。
+
+## 常見問題
+
+| 情況 | 處理方式 |
+| --- | --- |
+| 看不到 Skills 或 Upload | 先確認帳號方案、地區與學校工作區是否開放 Skills；Edu／Business 使用者可請管理者開啟上傳與安裝權限。 |
+| Windows 找不到 `py` 或 `python` | 安裝 Python 3.10 以上版本，勾選加入 PATH，重新開啟終端機後再執行 `check_setup.cmd`。 |
+| 顯示 `NCBI_EMAIL` 未設定 | 依上方 PowerShell 指令設定可聯絡的 email，再重新執行檢查。 |
+| 找不到全文 PDF | 這通常代表沒有合法公開版本或需要機構訂閱；請透過學校圖書館或自己已登入的瀏覽器取得，不要嘗試繞過限制。 |
+| `--auto` 已產出 Excel，是否可直接交作業？ | 不可以。它僅是 DRAFT；研究納入、結果解讀與研究缺口都必須人工確認。 |
 
 ## 授權
 

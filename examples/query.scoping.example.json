@@ -1,0 +1,18 @@
+{
+  "question_type": "scoping",
+  "population": "adult asthma",
+  "or_terms": [
+    "inhaled corticosteroid",
+    "ICS"
+  ],
+  "outcome_terms": [
+    "exacerbation",
+    "asthma control"
+  ],
+  "pub_types": [
+    "randomized controlled trial",
+    "observational study"
+  ],
+  "date_from": "2019/01/01",
+  "max_results": 100
+}

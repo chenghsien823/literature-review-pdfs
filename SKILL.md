@@ -15,6 +15,8 @@ Require Python 3.10 or later. Install the public dependency:
 python -m pip install -r requirements.txt
 ~~~
 
+For a new installation, run `check_setup.cmd` on Windows or `python scripts/check_setup.py` on macOS/Linux before the first PubMed search. This offline check verifies the bundled files, Python dependency, and command launchers; it never sends the user's configuration values anywhere.
+
 Before a PubMed request, set NCBI_EMAIL to a real contact address. Optionally set NCBI_API_KEY for the higher NCBI request limit. Keep those values in the user's environment or an explicitly supplied local env file; never place them in this skill, output files, or version control.
 
 ## 1. Search and evidence package

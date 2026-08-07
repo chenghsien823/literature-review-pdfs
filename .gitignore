@@ -1,0 +1,21 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Research outputs and downloaded full text
+outdir/
+outputs/
+fulltext/
+records.json
+included_records.json
+extraction.json
+extraction_DRAFT.json
+retrieval_manifest.csv
+01_search_log.xlsx
+02_evidence_table.xlsx
+03_gap_map.xlsx
+
+# Python cache
+__pycache__/
+*.py[cod]
