@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html
 import hashlib
 import io
 import json
 import os
 import re
 import sys
+import tarfile
 import time
 import urllib.error
 import urllib.parse
@@ -248,15 +250,26 @@ def request_bytes(url: str, timeout: int = 45) -> tuple[bytes, str, str]:
         return response.read(), response.headers.get("Content-Type", ""), response.geturl()
 
 
-def request_json(url: str) -> dict[str, Any] | None:
+def request_json(
+    url: str, diagnostics: list[str] | None = None, source: str = ""
+) -> dict[str, Any] | None:
     try:
         data, _, _ = request_bytes(url)
         return json.loads(data.decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, UnicodeDecodeError):
+    except (
+        OSError,
+        urllib.error.URLError,
+        urllib.error.HTTPError,
+        TimeoutError,
+        ValueError,
+        UnicodeDecodeError,
+    ) as exc:
+        if diagnostics is not None:
+            diagnostics.append(f"{source or 'JSON endpoint'} ({type(exc).__name__})")
         return None
 
 
-def pubmed_metadata(pmid: str) -> dict[str, str]:
+def pubmed_metadata(pmid: str, diagnostics: list[str] | None = None) -> dict[str, str]:
     if not pmid:
         return {}
     email = os.environ.get("NCBI_EMAIL", "researcher@example.com")
@@ -266,7 +279,9 @@ def pubmed_metadata(pmid: str) -> dict[str, str]:
             "tool": "retrieve-journal-pdfs", "email": email,
         }
     )
-    payload = request_json(EUTILS + "esummary.fcgi?" + params) or {}
+    payload = request_json(
+        EUTILS + "esummary.fcgi?" + params, diagnostics, "PubMed metadata"
+    ) or {}
     article = payload.get("result", {}).get(pmid, {})
     ids = {
         text(item.get("idtype")).lower(): text(item.get("value"))
@@ -368,10 +383,12 @@ def pubmed_first_author_country(pmid: str) -> str:
     return ""
 
 
-def europe_pmc_metadata(record: dict[str, str]) -> dict[str, str]:
+def europe_pmc_metadata(
+    record: dict[str, str], diagnostics: list[str] | None = None
+) -> dict[str, str]:
     query = f"EXT_ID:{record['pmid']}" if record["pmid"] else f'DOI:"{record["doi"]}"'
     url = EUROPE_PMC + "?" + urllib.parse.urlencode({"query": query, "format": "json", "pageSize": "1"})
-    payload = request_json(url) or {}
+    payload = request_json(url, diagnostics, "Europe PMC metadata") or {}
     results = payload.get("resultList", {}).get("result", [])
     if not results:
         return {}
@@ -386,6 +403,27 @@ def europe_pmc_metadata(record: dict[str, str]) -> dict[str, str]:
     }
 
 
+def pmc_oa_package_candidate(
+    pmcid: str, diagnostics: list[str] | None = None
+) -> dict[str, str] | None:
+    """Locate the official PMC Open Access package, if this article is in the OA subset."""
+    url = "https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?" + urllib.parse.urlencode({"id": pmcid})
+    try:
+        payload, _, _ = request_bytes(url)
+        root = ET.fromstring(payload)
+    except (OSError, ET.ParseError, urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
+        if diagnostics is not None:
+            diagnostics.append(f"PMC OA package metadata ({type(exc).__name__})")
+        return None
+    link = root.find(".//link[@format='tgz']")
+    href = text(link.get("href")) if link is not None else ""
+    if not href:
+        return None
+    if href.startswith("ftp://"):
+        href = "https://" + href.removeprefix("ftp://")
+    return {"source": "PMC OA package", "access_type": "open", "url": href, "kind": "tgz"}
+
+
 def merge_metadata(record: dict[str, str], *metadata: dict[str, str]) -> dict[str, str]:
     merged = dict(record)
     for meta in metadata:
@@ -395,16 +433,70 @@ def merge_metadata(record: dict[str, str], *metadata: dict[str, str]) -> dict[st
     return merged
 
 
-def candidate_urls(record: dict[str, str], pubmed: dict[str, str], europe: dict[str, str]) -> list[dict[str, str]]:
+def publisher_oa_candidates(
+    record: dict[str, str], diagnostics: list[str] | None = None
+) -> list[dict[str, str]]:
+    """Discover a public publisher PDF only when its landing page explicitly says OA."""
+    if not record["doi"]:
+        return []
+    landing = "https://doi.org/" + record["doi"]
+    try:
+        payload, content_type, final_url = request_bytes(landing)
+    except (OSError, urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
+        if diagnostics is not None:
+            diagnostics.append(f"Publisher OA page ({type(exc).__name__})")
+        return []
+    if "html" not in content_type.casefold():
+        return []
+    page = payload.decode("utf-8", errors="replace")
+    marker = page.casefold()
+    if not any(token in marker for token in (
+        "open access", "creative commons", '"isaccessibleforfree":true',
+        '"isaccessibleforfree": true',
+    )):
+        return []
+    pdf_url = ""
+    for tag in re.findall(r"<meta\b[^>]*>", page, flags=re.I):
+        if not re.search(r"\b(?:name|property)\s*=\s*['\"]citation_pdf_url['\"]", tag, flags=re.I):
+            continue
+        match = re.search(r"\bcontent\s*=\s*['\"]([^'\"]+)['\"]", tag, flags=re.I)
+        if match:
+            pdf_url = html.unescape(match.group(1))
+            break
+    if not pdf_url:
+        match = re.search(
+            r"<a\b[^>]*\bhref\s*=\s*['\"]([^'\"]+)['\"][^>]*>[^<]{0,80}download\s+pdf",
+            page,
+            flags=re.I,
+        )
+        if match:
+            pdf_url = html.unescape(match.group(1))
+    if not pdf_url:
+        return []
+    return [{
+        "source": "Publisher OA metadata",
+        "access_type": "open",
+        "url": urllib.parse.urljoin(final_url, pdf_url),
+    }]
+
+
+def candidate_urls(
+    record: dict[str, str], pubmed: dict[str, str], europe: dict[str, str],
+    diagnostics: list[str] | None = None,
+) -> list[dict[str, str]]:
     candidates: list[dict[str, str]] = []
     pmcid = pubmed.get("pmcid") or europe.get("pmcid")
     if pmcid:
+        package = pmc_oa_package_candidate(pmcid, diagnostics)
+        if package:
+            candidates.append(package)
+        candidates.append({"source": "Europe PMC REST", "access_type": "open", "url": f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextPDF"})
         candidates.append({"source": "PMC", "access_type": "open", "url": f"https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}/pdf/"})
         candidates.append({"source": "Europe PMC", "access_type": "open", "url": f"https://europepmc.org/articles/{pmcid}?pdf=render"})
     email = os.environ.get("UNPAYWALL_EMAIL") or os.environ.get("NCBI_EMAIL")
     if record["doi"] and email:
         url = UNPAYWALL + urllib.parse.quote(record["doi"], safe="") + "?" + urllib.parse.urlencode({"email": email})
-        payload = request_json(url) or {}
+        payload = request_json(url, diagnostics, "Unpaywall") or {}
         locations = [payload.get("best_oa_location")] + list(payload.get("oa_locations") or [])
         seen: set[str] = set()
         for location in locations:
@@ -414,6 +506,8 @@ def candidate_urls(record: dict[str, str], pubmed: dict[str, str], europe: dict[
             if candidate and candidate not in seen:
                 seen.add(candidate)
                 candidates.append({"source": text(location.get("host_type")) or "Unpaywall", "access_type": "open", "url": candidate})
+    if not any(item["access_type"] == "open" for item in candidates):
+        candidates.extend(publisher_oa_candidates(record, diagnostics))
     if record["doi"]:
         candidates.append({"source": "DOI publisher landing page", "access_type": "browser_handoff", "url": "https://doi.org/" + record["doi"]})
     return candidates
@@ -431,6 +525,25 @@ def validate_pdf(data: bytes) -> tuple[bool, str, str]:
     except Exception as exc:
         return False, "", f"PDF parser rejected the file: {type(exc).__name__}."
     return True, "", ""
+
+
+def pdf_from_pmc_package(data: bytes) -> tuple[bytes | None, str]:
+    """Extract the largest article PDF from an official PMC OA tar.gz package."""
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+            members = [
+                member for member in archive.getmembers()
+                if member.isfile() and member.name.casefold().endswith(".pdf")
+            ]
+            if not members:
+                return None, "PMC OA package contained no PDF."
+            member = max(members, key=lambda item: item.size)
+            handle = archive.extractfile(member)
+            if handle is None:
+                return None, "Could not read the PDF from the PMC OA package."
+            return handle.read(), ""
+    except (tarfile.TarError, OSError) as exc:
+        return None, f"PMC OA package could not be read ({type(exc).__name__})."
 
 
 def now_utc() -> str:
@@ -476,7 +589,8 @@ def retrieve(
             next_action="Add a verified PMID or DOI.",
         )
         return result
-    pubmed = pubmed_metadata(record["pmid"])
+    lookup_diagnostics: list[str] = []
+    pubmed = pubmed_metadata(record["pmid"], lookup_diagnostics)
     if record["doi"] and pubmed.get("doi") and record["doi"] != pubmed["doi"]:
         result = initial_result(record, filename_style)
         result.update(
@@ -485,13 +599,23 @@ def retrieve(
             next_action="Correct the PMID or DOI before retrieving full text.",
         )
         return result
-    europe = europe_pmc_metadata(record)
+    europe = europe_pmc_metadata(record, lookup_diagnostics)
     record = merge_metadata(record, pubmed, europe)
     if filename_style == "first-author-country-year" and not record.get("first_author_country"):
         record["first_author_country"] = pubmed_first_author_country(record["pmid"])
     result = initial_result(record, filename_style)
-    candidates = candidate_urls(record, pubmed, europe)
+    candidates = candidate_urls(record, pubmed, europe, lookup_diagnostics)
     open_candidates = [item for item in candidates if item["access_type"] == "open"]
+    if not open_candidates and lookup_diagnostics:
+        services = "; ".join(dict.fromkeys(lookup_diagnostics))
+        result.update(
+            retrieval_status="lookup_failed",
+            source="metadata/open-access lookup",
+            access_type="unavailable",
+            notes=country_note(record, filename_style, f"Open-access lookup was incomplete: {services}."),
+            next_action="Retry in an authorized network context; do not interpret this status as non-OA.",
+        )
+        return result
     if dry_run and open_candidates:
         item = open_candidates[0]
         result.update(
@@ -502,10 +626,12 @@ def retrieve(
             next_action="Re-run without --dry-run to download and validate.",
         )
         return result
+    candidate_failures: list[str] = []
     for item in open_candidates:
         try:
             data, content_type, final_url = request_bytes(item["url"])
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
+            candidate_failures.append(f"{item['source']} ({type(exc).__name__})")
             result.update(
                 retrieval_status="download_failed", source=item["source"],
                 access_type="open", candidate_url=item["url"],
@@ -513,8 +639,22 @@ def retrieve(
                 next_action="Review candidate URL or retry later.",
             )
             continue
+        if item.get("kind") == "tgz":
+            data, package_note = pdf_from_pmc_package(data)
+            if data is None:
+                candidate_failures.append(f"{item['source']} (no usable PDF)")
+                result.update(
+                    retrieval_status="invalid_pdf", source=item["source"],
+                    access_type="open", candidate_url=final_url,
+                    content_type=content_type,
+                    notes=country_note(record, filename_style, package_note),
+                    next_action="Inspect the PMC OA package manually; do not treat it as a PDF.",
+                )
+                continue
+            content_type = "application/pdf (extracted from PMC OA package)"
         valid, pages, note = validate_pdf(data)
         if not valid:
+            candidate_failures.append(f"{item['source']} (invalid PDF)")
             result.update(
                 retrieval_status="invalid_pdf", source=item["source"],
                 access_type="open", candidate_url=final_url,
@@ -531,6 +671,13 @@ def retrieve(
             content_type=content_type, sha256=hashlib.sha256(data).hexdigest(),
             page_count=pages, notes=country_note(record, filename_style, "Verified PDF."),
             next_action="Ready for full-text screening.",
+        )
+        return result
+    if result["retrieval_status"] in {"download_failed", "invalid_pdf"}:
+        result["notes"] = country_note(
+            record,
+            filename_style,
+            "All open candidates failed: " + "; ".join(candidate_failures),
         )
         return result
     publisher = next((item for item in candidates if item["access_type"] == "browser_handoff"), None)

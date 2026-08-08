@@ -35,6 +35,8 @@ python scripts/run_pipeline.py query.json outdir --extraction extraction.json
 
 Use --auto only to create a DRAFT scaffold. Do not treat its metadata-derived rows, evidence levels, directions, or gaps as verified conclusions.
 
+For high-recall searches, include singular/plural, acronym, and hyphenation variants in each concept's aliases (for example, `SGLT2i`, `SGLT2 inhibitors`, and `sodium-glucose co-transporter 2 inhibitors`). When a known eligible PMID is available, add it as `required_pmids`; a missing PMID produces an explicit recall-check warning instead of a silently incomplete result set.
+
 ## 2. Required download check-in
 
 After showing the search results and after a reviewed extraction.json exists, always ask:
@@ -66,7 +68,7 @@ After the user has confirmed download, run the same command without --dry-run. R
 
 The preferred PDF filename is FirstAuthor Country Year.pdf. Derive the country from the first author's PubMed affiliation. If it cannot be reliably verified, retain the legal download as FirstAuthor UnknownCountry Year.pdf and flag it in retrieval_manifest.csv.
 
-Use only PMC, Europe PMC, and Unpaywall-provided open locations. For needs_browser_session, open the publisher landing page only through an already authenticated browser session and only if the user is entitled to access. Never export cookies, enter credentials, solve CAPTCHAs, or defeat a paywall.
+Use PMC, Europe PMC (including its `fullTextPDF` REST endpoint), and Unpaywall-provided open locations first. A publisher PDF may be used only when its public landing page explicitly declares Open Access (or a Creative Commons licence) and supplies a public PDF URL; validate the downloaded bytes as usual. If a metadata source is unavailable, record `lookup_failed` rather than `not_found`, then retry in an authorized network context. For needs_browser_session, open the publisher landing page only through an already authenticated browser session and only if the user is entitled to access. Never export cookies, enter credentials, solve CAPTCHAs, or defeat a paywall.
 
 ## Completion wording
 

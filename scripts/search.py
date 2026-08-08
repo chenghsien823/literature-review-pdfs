@@ -125,6 +125,7 @@ def validate_query(query: Any) -> list[str]:
         "not_terms",
         "mesh_terms",
         "pub_types",
+        "required_pmids",
     ):
         value = query.get(key)
         if value is not None and (
@@ -141,6 +142,13 @@ def validate_query(query: Any) -> list[str]:
                 f"PubMed can expose at most {NCBI_RESULT_LIMIT} results through ESearch; "
                 "partition the query by date."
             )
+    if "required_pmids" in query:
+        value = query["required_pmids"]
+        if not isinstance(value, list) or any(
+            not isinstance(pmid, str) or not re.fullmatch(r"\d{4,10}", pmid.strip())
+            for pmid in value
+        ):
+            raise ValueError("required_pmids must be a list of PubMed IDs")
     if query.get("doi_backfill", "validated") not in {"validated", "off"}:
         raise ValueError("doi_backfill must be validated or off")
 
@@ -750,7 +758,21 @@ def run_search(
         "complete": len(records) == count,
         "retrieval_status": "COMPLETE" if len(records) == count else "PARTIAL",
         "sort": sort,
-        "warnings": warnings,
+        "warnings": warnings + (
+            [
+                "RECALL CHECK FAILED: required PMID(s) were not retrieved: "
+                + ", ".join(
+                    pmid for pmid in query_config.get("required_pmids", [])
+                    if pmid not in {record["pmid"] for record in records}
+                )
+                + ". Expand aliases or revise the query before treating this search as complete."
+            ]
+            if any(
+                pmid not in {record["pmid"] for record in records}
+                for pmid in query_config.get("required_pmids", [])
+            )
+            else []
+        ),
         "records": records,
     }
 
