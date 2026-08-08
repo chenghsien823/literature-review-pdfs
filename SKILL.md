@@ -19,6 +19,15 @@ For a new installation, run `check_setup.cmd` on Windows or `python scripts/chec
 
 Before a PubMed request, set NCBI_EMAIL to a real contact address. Optionally set NCBI_API_KEY for the higher NCBI request limit. Keep those values in the user's environment or an explicitly supplied local env file; never place them in this skill, output files, or version control.
 
+## 0. Confirm review type before searching
+
+Before creating `query.json`, ask exactly which route is intended: `narrative_scoping` or `srma`. Do not infer this from the topic. Write the answer to `query.json` as `review_type`.
+
+- `narrative_scoping`: use for broad mapping, narrative synthesis, or identifying research gaps. Export `01_search_log.xlsx`, `02_evidence_table.xlsx`, and `03_gap_map.xlsx`.
+- `srma`: use only for a protocol-driven systematic review with possible meta-analysis. Export `01_search_log.xlsx`, `02_srma_screening_register.xlsx`, `03_srma_data_extraction.xlsx`, `04_srma_risk_of_bias.xlsx`, and `05_srma_meta_analysis_input.xlsx`. Use the `srma-pipeline` workflow for protocol, independent human screening, effect-size validation, analysis, and PRISMA gates.
+
+SRMA mode creates templates and an audit snapshot; it does not pool data, assign risk-of-bias judgments, or turn AI decisions into final eligibility.
+
 ## 1. Search and objective identification record
 
 1. Create or validate query.json.
@@ -28,9 +37,11 @@ Before a PubMed request, set NCBI_EMAIL to a real contact address. Optionally se
 python scripts/run_pipeline.py query.json outdir --extraction extraction.json
 ~~~
 
-3. Keep these outputs unchanged:
+3. For `narrative_scoping`, keep these outputs unchanged:
    - 01_search_log.xlsx: objective PubMed identification record.
    - records.json: machine-readable source for screening.
+
+For `srma`, `run_pipeline.py` creates the five SRMA-specific workbooks listed above. Keep canonical screening decisions in `02_screening/*.jsonl`; the screening workbook is an auditable human-review snapshot, not the decision database.
 
 Do not treat `--auto` output as a screened evidence set. It is a metadata-only DRAFT scaffold.
 
@@ -59,12 +70,14 @@ python scripts/validate_screening_decisions.py outdir/02_screening/screening_can
 
 AI decisions are DRAFT only. A human reviewer must confirm every AI `include` and `needs_fulltext`, and audit a protocol-appropriate sample of AI exclusions. For systematic reviews or meta-analyses, use independent human screening and conflict adjudication; an AI agent is not an independent reviewer.
 
-Only after title/abstract and, when needed, full-text eligibility is human-confirmed may a record be written into `extraction.json` with `verified: true`. Then generate:
+Only after title/abstract and, when needed, full-text eligibility is human-confirmed may a record be written into `extraction.json` with `verified: true`. For `narrative_scoping`, then generate:
 
 - `02_evidence_table.xlsx`: reviewed evidence table.
 - `03_gap_map.xlsx`: reviewer-confirmed synthesis aid.
 
 Keep human eligibility decisions, data extraction, interpretation, evidence levels, directions, and gap statements distinct. Do not treat metadata-derived rows, evidence levels, directions, or gaps as verified conclusions.
+
+For `srma`, populate data extraction, risk-of-bias, and effect-size sheets only after the relevant human gate. Do not use `05_srma_meta_analysis_input.xlsx` as a pooled result or bypass estimand/PICOS and analysis-plan checks.
 
 For high-recall searches, include singular/plural, acronym, and hyphenation variants in each concept's aliases (for example, `SGLT2i`, `SGLT2 inhibitors`, and `sodium-glucose co-transporter 2 inhibitors`). When a known eligible PMID is available, add it as `required_pmids`; a missing PMID produces an explicit recall-check warning instead of a silently incomplete result set.
 

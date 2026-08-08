@@ -2,7 +2,7 @@
 
 這是一個可安裝到 Codex 的研究型 skill，協助你完成從 PubMed 檢索、AI 輔助初篩、人工確認、文獻整理，到合法取得全文 PDF 的流程。
 
-它的核心原則很簡單：系統負責搜尋、整理與稽核；是否納入研究、如何解讀結果與怎麼下結論，仍由研究者判斷。
+它的核心原則很簡單：先選擇 review 類型，再用相應的資料結構工作；系統負責搜尋、整理與稽核，是否納入研究、如何解讀結果與怎麼下結論，仍由研究者判斷。
 
 ## 可以做什麼？
 
@@ -11,6 +11,15 @@
 3. 產出設計導向的證據表與介入措施－結果的研究缺口地圖。
 4. 在篩選完成後，主動詢問是否要下載已納入研究的全文。
 5. 只嘗試取得合法公開的 PDF，並建立下載與驗證紀錄。
+
+## 第一步：選擇 review 類型
+
+建立 `query.json` 前，請先告訴 Codex 本次是：
+
+- `narrative_scoping`：廣泛整理、敘述性回顧、scoping review 或研究缺口分析。匯出搜尋紀錄、證據表與 gap map。
+- `srma`：依預先計畫執行的系統性回顧／可能的統合分析。匯出搜尋紀錄、雙人篩選與 PRISMA 登錄表、資料萃取表、偏倚風險表、效應量輸入表。
+
+請在 `query.json` 寫入 `"review_type": "narrative_scoping"` 或 `"review_type": "srma"`。不要只從研究主題推測類型。SRMA 模式只建立範本與稽核資料，不會自動統合或把 AI 決策當成最終資格判定。
 
 ## 學生快速安裝（建議）
 
@@ -71,7 +80,7 @@ export NCBI_EMAIL="you@example.org"
 ## 最短成功路徑
 
 1. 將 `examples/query.scoping.example.json` 複製為 `query.json`，把族群、介入措施與結果詞換成自己的研究主題。
-2. 請 Codex 協助檢查檢索式，再執行 `run_pipeline.cmd query.json outdir --auto` 建立搜尋紀錄、`records.json` 與 **DRAFT** 草稿。
+2. 在 `query.json` 指定 `review_type`，請 Codex 協助檢查檢索式，再執行 `run_pipeline.cmd query.json outdir --auto` 建立對應的搜尋紀錄與工作簿。
 3. 執行 `create_screening_queue.py`，填妥納入／排除標準後重跑一次，建立 AI 初篩與人工覆核佇列。
 4. AI 可先提出 DRAFT 決策；人工確認納入與需全文項目後，再完成 `extraction.json`。只有人工確認且標示 `verified: true` 的納入研究才會進入全文下載清單。
 5. 當 Codex 詢問是否下載全文時，確認後才下載合法公開 PDF。
@@ -86,7 +95,7 @@ export NCBI_EMAIL="you@example.org"
 python scripts/run_pipeline.py query.json outdir --extraction extraction.json
 ~~~
 
-完成後會保留下列檔案：
+若 `review_type` 是 `narrative_scoping`，完成後會保留下列檔案：
 
 - 01_search_log.xlsx：客觀的 PubMed 搜尋與識別紀錄
 - records.json：供篩選佇列使用的機器可讀原始記錄
@@ -94,6 +103,16 @@ python scripts/run_pipeline.py query.json outdir --extraction extraction.json
 - 03_gap_map.xlsx：協助發現研究缺口的整理地圖
 
 如果使用 --auto，系統只會建立 DRAFT 草稿。草稿不能視為已驗證證據，也不應直接用於研究結論或跳過篩選。
+
+若 `review_type` 是 `srma`，會改為輸出：
+
+- 01_search_log.xlsx：搜尋與識別稽核紀錄
+- 02_srma_screening_register.xlsx：題名／摘要、全文雙人篩選與 PRISMA 流程快照
+- 03_srma_data_extraction.xlsx：研究特徵、結果與效應估計資料萃取
+- 04_srma_risk_of_bias.xlsx：RoB 2 與 ROBINS-I 範本
+- 05_srma_meta_analysis_input.xlsx：binary、continuous 與 generic inverse-variance 的檢核輸入表
+
+SRMA 必須先完成 protocol/PICOS、人工雙審與衝突裁決；效應量工作簿不是統合結果。
 
 ### 2. 建立 AI 初篩與人工覆核佇列
 
@@ -159,6 +178,7 @@ PDF 預設會命名為「第一作者 國家 年份.pdf」。如果無法可靠�
 | 顯示 `NCBI_EMAIL` 未設定 | 依上方 PowerShell 指令設定可聯絡的 email，再重新執行檢查。 |
 | 找不到全文 PDF | 這通常代表沒有合法公開版本或需要機構訂閱；請透過學校圖書館或自己已登入的瀏覽器取得，不要嘗試繞過限制。 |
 | AI 初篩是否可直接作為納入結果？ | 不可以。AI 僅產生 DRAFT；人工必須確認納入與需全文項目，系統性回顧還需要獨立人工審查與衝突裁決。 |
+| SRMA 模式會直接產生 forest plot 或 pooled effect 嗎？ | 不會。它只輸出可稽核的萃取、RoB 與效應量輸入範本；需先完成 protocol、資料驗證與分析計畫。 |
 | `--auto` 已產出 Excel，是否可直接交作業？ | 不可以。它僅是 DRAFT；研究納入、結果解讀與研究缺口都必須人工確認。 |
 
 ## 授權

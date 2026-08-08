@@ -1,24 +1,30 @@
 #!/usr/bin/env python3
 """
 run_pipeline.py — ONE entry point for the narrative-review-search skill.
-Search terms in -> THREE Excels out: search log, evidence table, gap map.
+Search terms in -> review-type-specific Excel outputs.
 
 Usage:
     python3 run_pipeline.py query.json outdir [--extraction extraction.json] [--auto]
 
-query.json (drives the sweep AND the gap-map axes):
+query.json (drives the sweep AND the export route):
+    review_type   : "narrative_scoping" | "srma" (required for new projects)
     question_type : "scoping"          (recommended for a sweep)
     population    : str (optional anchor)
     or_terms      : [str]  intervention/concept terms  <-- also used to auto-detect `contrast`
     outcome_terms : [str]  outcome domains to map      <-- used to auto-detect `domains` (gap-map columns)
     plus any filters (species, date_from/to, pub_types, max_results, ...). abstracts are forced ON.
 
-Outputs (always 3 files in outdir):
+Narrative/scoping outputs:
     01_search_log.xlsx    raw identification pool (deterministic, objective)
     02_evidence_table.xlsx   design-aware evidence table   } from an extraction JSON
     03_gap_map.xlsx          contrast x domain gap map      }
 
-Extraction JSON (the table/gap content):
+SRMA outputs:
+    01_search_log.xlsx, 02_srma_screening_register.xlsx,
+    03_srma_data_extraction.xlsx, 04_srma_risk_of_bias.xlsx,
+    05_srma_meta_analysis_input.xlsx
+
+Extraction JSON (narrative/scoping table/gap content):
     --extraction FILE : use a human/Claude-prepared extraction (paraphrased key_finding,
                         design, evidence_level, direction, conflict, contrast, domains, fields).
                         THIS is the proper path — extraction is reasoning, not regex.
@@ -30,6 +36,7 @@ Extraction JSON (the table/gap content):
 The split is deliberate: the search log is objective; the evidence table and gap map
 encode judgement. --auto gives you a scaffold so 3 files always appear, but the synthesis
 columns are the reviewer's to complete. Do not present --auto output as finished.
+SRMA mode produces templates only; it never pools data or treats AI screening as final.
 """
 import sys, os, json, subprocess, argparse
 
@@ -61,6 +68,20 @@ def dedup(records):
         if k in seen: continue
         seen.add(k); out.append(r)
     return out
+
+def review_type(query):
+    value = str(query.get("review_type") or "").strip().lower().replace("-", "_").replace("/", "_")
+    aliases = {
+        "narrative": "narrative_scoping", "scoping": "narrative_scoping", "narrative_scoping": "narrative_scoping",
+        "srma": "srma", "systematic_review": "srma", "systematic_review_meta_analysis": "srma",
+    }
+    if value in aliases:
+        return aliases[value]
+    legacy = str(query.get("question_type") or "").strip().lower()
+    if legacy in {"narrative", "scoping"}:
+        print("WARNING: review_type is missing; treating legacy question_type as narrative_scoping. Set review_type explicitly for new projects.")
+        return "narrative_scoping"
+    raise ValueError("query.json must set review_type to 'narrative_scoping' or 'srma'.")
 
 def auto_extract(records, query):
     """DRAFT extraction from metadata only. Judgement columns BLANK; verified=false."""
@@ -107,6 +128,11 @@ def main():
     a=ap.parse_args()
     os.makedirs(a.outdir, exist_ok=True)
     query=json.load(open(a.query, encoding="utf-8-sig"))
+    try:
+        selected_review_type = review_type(query)
+    except ValueError as exc:
+        print(f"Input error: {exc}", file=sys.stderr)
+        return 2
     query["with_abstracts"]=True  # need abstracts for detection + screening
 
     # tmp query with abstracts on
@@ -118,9 +144,20 @@ def main():
     run("search.py","--query",qpath,"--out",recs_path)
     log_path=os.path.join(a.outdir,"01_search_log.xlsx")
     run("build_search_log.py",recs_path,log_path,
-        "--label", query.get("population","") or "scoping sweep")
+        "--label", query.get("population","") or ("SRMA search" if selected_review_type == "srma" else "scoping sweep"))
 
     records=dedup(json.load(open(recs_path,encoding="utf-8-sig")))
+
+    if selected_review_type == "srma":
+        run("build_srma_workbooks.py", recs_path, a.outdir, "--query", qpath)
+        print("\nDONE. SRMA Excel workbooks in", a.outdir)
+        print("  01_search_log.xlsx              (identification audit trail)")
+        print("  02_srma_screening_register.xlsx (human screening + PRISMA snapshot)")
+        print("  03_srma_data_extraction.xlsx    (human-confirmed extraction)")
+        print("  04_srma_risk_of_bias.xlsx       (RoB 2 / ROBINS-I templates)")
+        print("  05_srma_meta_analysis_input.xlsx (checked effect-size inputs; not pooled results)")
+        print("Use the structured JSONL queue for canonical decisions and the srma-pipeline workflow for protocol, dual screening, and analysis gates.")
+        return 0
 
     # ---- 2. EXTRACTION (judgement) ----
     if a.extraction:
