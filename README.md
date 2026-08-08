@@ -1,15 +1,16 @@
 # 文獻搜尋與全文下載 Skill
 
-這是一個可安裝到 Codex 的研究型 skill，協助你完成從 PubMed 檢索、文獻整理，到合法取得全文 PDF 的流程。
+這是一個可安裝到 Codex 的研究型 skill，協助你完成從 PubMed 檢索、AI 輔助初篩、人工確認、文獻整理，到合法取得全文 PDF 的流程。
 
 它的核心原則很簡單：系統負責搜尋、整理與稽核；是否納入研究、如何解讀結果與怎麼下結論，仍由研究者判斷。
 
 ## 可以做什麼？
 
 1. 以 PubMed 建立可追溯的文獻搜尋紀錄。
-2. 產出設計導向的證據表與介入措施－結果的研究缺口地圖。
-3. 在篩選完成後，主動詢問是否要下載已納入研究的全文。
-4. 只嘗試取得合法公開的 PDF，並建立下載與驗證紀錄。
+2. 以 JSONL 建立可稽核的 title/abstract 篩選佇列；AI 可產生初篩草稿，人工負責最終確認。
+3. 產出設計導向的證據表與介入措施－結果的研究缺口地圖。
+4. 在篩選完成後，主動詢問是否要下載已納入研究的全文。
+5. 只嘗試取得合法公開的 PDF，並建立下載與驗證紀錄。
 
 ## 學生快速安裝（建議）
 
@@ -70,13 +71,14 @@ export NCBI_EMAIL="you@example.org"
 ## 最短成功路徑
 
 1. 將 `examples/query.scoping.example.json` 複製為 `query.json`，把族群、介入措施與結果詞換成自己的研究主題。
-2. 請 Codex 協助檢查檢索式，再執行 `run_pipeline.cmd query.json outdir --auto` 建立搜尋紀錄與 **DRAFT** 草稿。
-3. 人工閱讀、篩選並完成 `extraction.json`；只有標示 `verified: true` 的納入研究才會進入全文下載清單。
-4. 當 Codex 詢問是否下載全文時，確認後才下載合法公開 PDF。
+2. 請 Codex 協助檢查檢索式，再執行 `run_pipeline.cmd query.json outdir --auto` 建立搜尋紀錄、`records.json` 與 **DRAFT** 草稿。
+3. 執行 `create_screening_queue.py`，填妥納入／排除標準後重跑一次，建立 AI 初篩與人工覆核佇列。
+4. AI 可先提出 DRAFT 決策；人工確認納入與需全文項目後，再完成 `extraction.json`。只有人工確認且標示 `verified: true` 的納入研究才會進入全文下載清單。
+5. 當 Codex 詢問是否下載全文時，確認後才下載合法公開 PDF。
 
 ## 基本流程
 
-### 1. 建立搜尋與證據整理檔案
+### 1. 建立搜尋與識別紀錄
 
 準備 query.json 與已人工審核的 extraction.json，然後執行：
 
@@ -84,17 +86,43 @@ export NCBI_EMAIL="you@example.org"
 python scripts/run_pipeline.py query.json outdir --extraction extraction.json
 ~~~
 
-完成後會得到三份檔案：
+完成後會保留下列檔案：
 
 - 01_search_log.xlsx：客觀的 PubMed 搜尋與識別紀錄
+- records.json：供篩選佇列使用的機器可讀原始記錄
 - 02_evidence_table.xlsx：經研究者審核的證據整理表
 - 03_gap_map.xlsx：協助發現研究缺口的整理地圖
 
-如果使用 --auto，系統只會建立 DRAFT 草稿。草稿不能視為已驗證證據，也不應直接用於研究結論。
+如果使用 --auto，系統只會建立 DRAFT 草稿。草稿不能視為已驗證證據，也不應直接用於研究結論或跳過篩選。
 
-### 2. 選出要下載全文的研究
+### 2. 建立 AI 初篩與人工覆核佇列
 
-完成篩選、確認納入研究，且 extraction.json 中的研究已標記為 verified:true 後，執行：
+不要用 Excel 當篩選決策資料庫。搜尋完成後，使用 `records.json` 建立本機 JSONL 佇列：
+
+~~~text
+python scripts/create_screening_queue.py outdir/records.json outdir/02_screening
+~~~
+
+第一次執行會建立 `outdir/02_screening/screening_criteria.json` 後停止。請填寫研究問題、納入條件與預先定義的排除理由，再執行一次相同指令。
+
+第二次執行會建立：
+
+- `screening_candidates.jsonl`：不可直接覆寫的候選文獻資料
+- `agent_screening_instructions.md`：AI 初篩決策格式
+- `review_queue.html`：本機人工審核頁，可匯出 `reviewer_decisions.jsonl`
+- `screening_manifest.json`：來源、筆數與建立時間的稽核紀錄
+
+請 AI 將初篩決策另存為 `ai_screening_draft.jsonl`，不要修改候選文獻檔。每筆需保留納入／排除／需全文決策、標準依據、排除理由（如適用）、信心度與時間戳。完成後驗證格式：
+
+~~~text
+python scripts/validate_screening_decisions.py outdir/02_screening/screening_candidates.jsonl outdir/02_screening/ai_screening_draft.jsonl
+~~~
+
+AI 決策一律是 DRAFT。人工必須確認每一筆 AI 建議納入或需全文的文獻，並按研究計畫抽查 AI 排除項目。系統性回顧或統合分析仍須執行獨立人工雙人篩選與衝突裁決。
+
+### 3. 完成人工確認、資料萃取與全文準備
+
+完成題名／摘要篩選、需要時的全文資格確認與資料萃取後，才在 `extraction.json` 將確定納入研究標記為 `verified: true`，再執行：
 
 ~~~text
 python scripts/prepare_fulltext_input.py outdir/records.json extraction.json outdir/included_records.json
@@ -102,7 +130,7 @@ python scripts/prepare_fulltext_input.py outdir/records.json extraction.json out
 
 工具會優先使用 DOI、再使用 PMID 對照原始搜尋結果，只保留已驗證且確定納入的研究。
 
-### 3. 先檢查合法全文來源
+### 4. 先檢查合法全文來源
 
 先以 dry-run 查看可能取得的全文：
 
@@ -130,6 +158,7 @@ PDF 預設會命名為「第一作者 國家 年份.pdf」。如果無法可靠�
 | Windows 找不到 `py` 或 `python` | 安裝 Python 3.10 以上版本，勾選加入 PATH，重新開啟終端機後再執行 `check_setup.cmd`。 |
 | 顯示 `NCBI_EMAIL` 未設定 | 依上方 PowerShell 指令設定可聯絡的 email，再重新執行檢查。 |
 | 找不到全文 PDF | 這通常代表沒有合法公開版本或需要機構訂閱；請透過學校圖書館或自己已登入的瀏覽器取得，不要嘗試繞過限制。 |
+| AI 初篩是否可直接作為納入結果？ | 不可以。AI 僅產生 DRAFT；人工必須確認納入與需全文項目，系統性回顧還需要獨立人工審查與衝突裁決。 |
 | `--auto` 已產出 Excel，是否可直接交作業？ | 不可以。它僅是 DRAFT；研究納入、結果解讀與研究缺口都必須人工確認。 |
 
 ## 授權
