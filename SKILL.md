@@ -1,6 +1,6 @@
 ---
 name: literature-review-pdfs
-description: Build a PubMed narrative-review evidence package and offer legal full-text PDF retrieval for its screened studies. Use when Codex needs to find literature for a review, create a PubMed search log, evidence table, or research-gap map, then ask whether to obtain included papers' PDFs; also trigger on 文獻搜尋、找文獻、廣掃、證據表、研究缺口、下載全文、下載文獻 PDF、narrative review, or full-text retrieval after a literature search. Preserve the distinction between automated retrieval and human evidence judgement. Download only legally accessible PDFs and never bypass paywalls, CAPTCHAs, cookies, Cloudflare, or access controls.
+description: Build a PubMed narrative-review evidence package with an agent-friendly, auditable title/abstract screening queue, then offer legal full-text PDF retrieval for human-confirmed included studies. Use when Codex needs to find or screen literature for a review, create a PubMed search log, screening queue, evidence table, or research-gap map, or obtain legal full texts. Also trigger on 文獻搜尋、篩選文獻、初篩、找文獻、廣掃、證據表、研究缺口、下載全文、下載文獻 PDF, narrative review, or full-text retrieval after a literature search. Preserve the distinction between AI drafting and human evidence judgement. Download only legally accessible PDFs and never bypass paywalls, CAPTCHAs, cookies, Cloudflare, or access controls.
 ---
 
 # 文獻搜尋與全文下載
@@ -19,7 +19,7 @@ For a new installation, run `check_setup.cmd` on Windows or `python scripts/chec
 
 Before a PubMed request, set NCBI_EMAIL to a real contact address. Optionally set NCBI_API_KEY for the higher NCBI request limit. Keep those values in the user's environment or an explicitly supplied local env file; never place them in this skill, output files, or version control.
 
-## 1. Search and evidence package
+## 1. Search and objective identification record
 
 1. Create or validate query.json.
 2. Run:
@@ -30,14 +30,45 @@ python scripts/run_pipeline.py query.json outdir --extraction extraction.json
 
 3. Keep these outputs unchanged:
    - 01_search_log.xlsx: objective PubMed identification record.
-   - 02_evidence_table.xlsx: reviewed evidence table.
-   - 03_gap_map.xlsx: reviewer-confirmed synthesis aid.
+   - records.json: machine-readable source for screening.
 
-Use --auto only to create a DRAFT scaffold. Do not treat its metadata-derived rows, evidence levels, directions, or gaps as verified conclusions.
+Do not treat `--auto` output as a screened evidence set. It is a metadata-only DRAFT scaffold.
+
+## 2. Screen with the local structured queue
+
+Do not use Excel as the screening database. Create a stable, agent-readable queue after the search:
+
+~~~text
+python scripts/create_screening_queue.py outdir/records.json outdir/02_screening
+~~~
+
+The first run writes `02_screening/screening_criteria.json` and exits. Define the review question, inclusion criteria, and protocol-specific exclusion reasons; then rerun the command. The completed run creates:
+
+- `screening_candidates.jsonl`: immutable, source-linked candidate records for an agent.
+- `agent_screening_instructions.md`: the exact draft-decision schema.
+- `review_queue.html`: local human reviewer helper. Export its decisions as `reviewer_decisions.jsonl`.
+- `screening_manifest.json`: source and count audit record.
+
+Ask the agent to write a separate `ai_screening_draft.jsonl`. Each decision must be `include`, `exclude`, or `needs_fulltext`, with per-criterion results, an abstract-grounded rationale, an exclusion reason when applicable, confidence, reviewer identity, and timestamp. Never let the agent edit the candidate records or silently overwrite human decisions.
+
+Validate any draft or reviewer decision file before using it:
+
+~~~text
+python scripts/validate_screening_decisions.py outdir/02_screening/screening_candidates.jsonl outdir/02_screening/ai_screening_draft.jsonl
+~~~
+
+AI decisions are DRAFT only. A human reviewer must confirm every AI `include` and `needs_fulltext`, and audit a protocol-appropriate sample of AI exclusions. For systematic reviews or meta-analyses, use independent human screening and conflict adjudication; an AI agent is not an independent reviewer.
+
+Only after title/abstract and, when needed, full-text eligibility is human-confirmed may a record be written into `extraction.json` with `verified: true`. Then generate:
+
+- `02_evidence_table.xlsx`: reviewed evidence table.
+- `03_gap_map.xlsx`: reviewer-confirmed synthesis aid.
+
+Keep human eligibility decisions, data extraction, interpretation, evidence levels, directions, and gap statements distinct. Do not treat metadata-derived rows, evidence levels, directions, or gaps as verified conclusions.
 
 For high-recall searches, include singular/plural, acronym, and hyphenation variants in each concept's aliases (for example, `SGLT2i`, `SGLT2 inhibitors`, and `sodium-glucose co-transporter 2 inhibitors`). When a known eligible PMID is available, add it as `required_pmids`; a missing PMID produces an explicit recall-check warning instead of a silently incomplete result set.
 
-## 2. Required download check-in
+## 3. Required download check-in
 
 After showing the search results and after a reviewed extraction.json exists, always ask:
 
@@ -48,7 +79,7 @@ State the number of verified:true studies that can be prepared. Do not ask this 
 - If the answer is no, deliver the evidence package and leave records.json available for a later run.
 - If the answer is yes, prepare only the reviewed included studies. Never silently substitute all PubMed hits.
 
-## 3. Prepare selected studies
+## 4. Prepare selected studies
 
 ~~~text
 python scripts/prepare_fulltext_input.py outdir/records.json extraction.json outdir/included_records.json
@@ -56,7 +87,7 @@ python scripts/prepare_fulltext_input.py outdir/records.json extraction.json out
 
 The helper matches DOI first and PMID second. It writes only verified included records and reports unmatched or unverified rows. Stop and resolve an empty selection or unmatched record before claiming the download set is complete.
 
-## 4. Retrieve legal full text
+## 5. Retrieve legal full text
 
 First inspect legal candidates:
 
